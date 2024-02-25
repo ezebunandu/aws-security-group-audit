@@ -1,4 +1,13 @@
 import boto3
+import boto3.session
+import botocore
+
+# make this into an input to the cli wrapper (arg parse)
+CROSS_ACCOUNT_ACCESS_ROLE_NAME = "OrganizationAccountAccessRole"
+
+# make this into an optional cli input
+# the name of the master account in the test env is "securing-the-cloud"
+MASTER_ACCOUNT_NAME = "securing-the-cloud"
 
 
 def get_active_accounts(org_client):
@@ -43,6 +52,7 @@ def list_active_regions(ec2_client):
 
 
 def has_ipv4_open_ssh_or_rdp(security_group_rule):
+    """returns true if the security group rule allows open ssh or rdp from 0.0.0.0/0"""
     for rule in security_group_rule.ip_permissions:
         if rule.get("FromPort") in [22, 3389] or rule.get("ToPort") in [22, 3389]:
             for ip4_range in rule.get("IpRanges"):
@@ -50,55 +60,88 @@ def has_ipv4_open_ssh_or_rdp(security_group_rule):
 
 
 def has_ipv6_open_ssh_or_rdp(security_group_rule):
+    """returns true if the security group rule allows open ssh or rdp from ::/0"""
     for rule in security_group_rule.ip_permissions:
         if rule.get("FromPort") in [22, 3389] or rule.get("ToPort") in [22, 3389]:
             for ipv6_range in rule.get("Ipv6Ranges"):
                 return ipv6_range.get("CidrIpv6") in ["::/0"]
 
 
-def get_security_groups_with_open_ssh_or_rdp_all_regions(client, regions):
-    # use client will be used to pass context to the different aws accounts
-    # by assuming roles and using boto3 sessions
-    # get the active regions in the account
-    # for each region
-    # get the security groups that have open ssh or rdp open
-    # return a list of violations found
-    # each violiation should include a dictionary of the security group rule
-    # and should include whether its open ssh or rdp access
-    pass
+def get_security_groups_with_open_ssh_or_rdp_all_regions(role_session, active_regions):
+    violations = []
+    for region in active_regions:
 
+        ec2 = role_session.resource("ec2", region_name=region)
 
-# There has to be a cross-account role that the script will assume into the
-# member accounts to be able to do stuff
-# the basic use case should just work for one account
-# being the one from which it is currently being run
+        security_groups = ec2.security_groups.all()
+
+        for security_group in security_groups:
+            security_group_name = security_group.group_name
+            if has_ipv4_open_ssh_or_rdp(security_group):
+                violations.append(
+                    {
+                        security_group_name: "Has open ipv4 ssh or rdp access from the internet"
+                    }
+                )
+            if has_ipv6_open_ssh_or_rdp(security_group):
+                violations.append(
+                    {
+                        security_group_name: "has open ipv6 ssh or rdp access from the internet"
+                    }
+                )
+    print(violations)
+    return violations
 
 
 def main():
-    master_account_org_client = boto3.client("organizations")
-    master_account_ec2_client = boto3.client("ec2")
+    main_session = boto3.session.Session()
+    master_account_org_client = main_session.client("organizations")
+    master_account_ec2_client = main_session.client("ec2")
+    sts_client = main_session.client("sts")
+
     audit_results = {}
     active_accounts = get_active_accounts(master_account_org_client)
     active_regions = list_active_regions(master_account_ec2_client)
 
+    session = main_session
     for account in active_accounts:
-        # assume role into account ?
-        # maybe in a seperate thread ?
         regions = active_regions
         account_name, account_id = account.get("account_name"), account.get(
             "account_id"
         )
-        for region in regions:
-            audit_results[account_name] = "violations will be added and reported"
 
         # the name of the master account in the test env is `securing-the-cloud`
-        if account_name != "securing-the-cloud":
-            print(f"Assume role here for {account_id}")
+        if account_name != MASTER_ACCOUNT_NAME:
+            # assume role
 
-    # for each account except the master account
-    # assume the cross-account role into the account
-    # get_security_groups_with_open_ssh_or_rdp_all_regions()
-    # add dict of {account_id: [violations]} to the empty dict
+            role_arn = (
+                f"arn:aws:iam::{account_id}:role/{CROSS_ACCOUNT_ACCESS_ROLE_NAME}"
+            )
+            try:
+                print("Assuming cross account role for {account_id}")
+                # test env always expect original user (hezebonica) in role session name
+                member_account = sts_client.assume_role(
+                    RoleArn=role_arn, RoleSessionName="hezebonica"
+                )
+                xAcctAccessKey = member_account["Credentials"]["AccessKeyId"]
+                xAcctSecretKey = member_account["Credentials"]["SecretAccessKey"]
+                xAcctSeshToken = member_account["Credentials"]["SessionToken"]
+
+                cross_account_session = boto3.Session(
+                    aws_access_key_id=xAcctAccessKey,
+                    aws_secret_access_key=xAcctSecretKey,
+                    aws_session_token=xAcctSeshToken,
+                )
+                session = cross_account_session
+            except botocore.exceptions as error:
+                # raise error
+                print(f"error assuming role: {error}")
+                continue
+        violations_found = get_security_groups_with_open_ssh_or_rdp_all_regions(
+            session, regions
+        )
+        audit_results[account_name] = violations_found
+
     # convert the dict to csv and write to console/file
     print(audit_results)
 
