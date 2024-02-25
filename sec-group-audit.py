@@ -75,9 +75,9 @@ def get_security_groups_with_open_ssh_or_rdp_all_regions(active_regions):
 
 def main():
     # start with an empty dict
-    # get the list of accounts in an aws org
-    ### there has to be a cross account role that will be assumed
-    # for each account
+    # get the list of active accounts in the org
+    # for each account except the master account
+    # assume the cross-account role into the account
     # get_security_groups_with_open_ssh_or_rdp_all_regions()
     # add dict of {account_id: [violations]} to the empty dict
     pass
