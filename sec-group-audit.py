@@ -51,36 +51,23 @@ def has_ipv6_open_ssh_or_rdp(security_group_rule):
                 return ipv6_range.get("CidrIpv6") in ["::/0"]
 
 
-def list_security_groups(account_id):
+def get_security_groups_with_open_ssh_or_rdp_all_regions(account, active_regions):
+    # get the active regions in the account
+    # for each region
+    # get the security groups that have open ssh or rdp open
+    # return a list of violations found
+    # each violiation should include a dictionary of the security group rule
+    # and should include whether its open ssh or rdp access
     pass
 
 
 def main():
-    # Listing all accounts in the AWS Organization
-    accounts = list_accounts()
-
-    # Dictionary to store account IDs and their corresponding open security groups
-    open_security_groups_by_account = {}
-
-    # Iterate through each account
-    for account in accounts:
-        account_id = account["Id"]
-        print(f"Enumerating security groups in {account_id}")
-        print("--------------------------------------------------------------")
-        open_security_groups = list_security_groups(account_id)
-        if open_security_groups:
-            print("Found open security group rules allowing ssh or rdp access")
-            open_security_groups_by_account[account_id] = open_security_groups
-
-    # Print the results
-    for account_id, open_security_groups in open_security_groups_by_account.items():
-        print(
-            f"Account Id: {account_id}, Name: {account['Name']}, Email: {account['Email']}, Status: {account['Status']}"
-        )
-        for sg in open_security_groups:
-            print(
-                f"\tSecurity Group Id: {sg['GroupId']}, Name: {sg['GroupName']}, Description: {sg['Description']}"
-            )
+    # start with an empty dict
+    # get the list of accounts in an aws org
+    # for each account
+    # get_security_groups_with_open_ssh_or_rdp_all_regions()
+    # add dict of {account_id: [violations]} to the empty dict
+    pass
 
 
 if __name__ == "__main__":
