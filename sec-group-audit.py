@@ -51,7 +51,7 @@ def has_ipv6_open_ssh_or_rdp(security_group_rule):
                 return ipv6_range.get("CidrIpv6") in ["::/0"]
 
 
-def get_security_groups_with_open_ssh_or_rdp_all_regions(account, active_regions):
+def get_security_groups_with_open_ssh_or_rdp_all_regions(active_regions):
     # get the active regions in the account
     # for each region
     # get the security groups that have open ssh or rdp open
@@ -61,9 +61,16 @@ def get_security_groups_with_open_ssh_or_rdp_all_regions(account, active_regions
     pass
 
 
+# There has to be a cross-account role that the script will assume into the
+# member accounts to be able to do stuff
+# the basic use case should just work for one account
+# being the one from which it is currently being run
+
+
 def main():
     # start with an empty dict
     # get the list of accounts in an aws org
+    ### there has to be a cross account role that will be assumed
     # for each account
     # get_security_groups_with_open_ssh_or_rdp_all_regions()
     # add dict of {account_id: [violations]} to the empty dict

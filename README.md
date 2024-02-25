@@ -6,6 +6,8 @@ Python script to audit the security groups within all accounts in an AWS org for
 
 - The script will be run from the management account of the AWS org
 - The script will be run with AdministratorAccess permissions
+- There should be `OrganizationAccountAccessRole` roles in all the member accounts
+- The script user should be assume the `OrganizationAccountAccessRole into the member accounts
 
 ## How to run
 
