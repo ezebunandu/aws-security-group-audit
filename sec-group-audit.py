@@ -1,25 +1,31 @@
 import boto3
 
 
-def list_accounts():
-    """List the security groups in the AWS org"""
-    # Initialize the boto3 client for AWS Organizations
+def get_active_accounts():
+    """get all the active accounts in an aws org
+    returns list of {"account_name": account_name, "account_id": account_id}"""
     org_client = boto3.client("organizations")
 
     # Pagination is used as there can be more accounts than the default limit
     paginator = org_client.get_paginator("list_accounts")
 
     # List to store all accounts
-    all_accounts = []
+    all_active_accounts = []
 
     for page in paginator.paginate():
         # Extracting account details from each page
         accounts = page["Accounts"]
-
-        # Appending accounts to the list
-        all_accounts.extend(accounts)
-
-    return all_accounts
+        for account in accounts:
+            account_id, account_status, account_name = (
+                account["Id"],
+                account["Status"],
+                account["Name"],
+            )
+            # only add active accounts to the list
+            if account_status == "ACTIVE":
+                all_active_accounts.append(
+                    {"account_name": account_name, "account_id": account_id}
+                )
 
 
 def list_active_regions():
