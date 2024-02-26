@@ -86,8 +86,13 @@ def main():
         # network_acl_audit_results[account_name] = network_acl_violations_found
 
     # convert the dict to csv and write to console/file
+    print("security group audit results")
+    print("------------------------------------")
     print(security_group_audit_results)
+    print("-------------------------------------")
+    print("network acl audit results")
     print(network_acl_audit_results)
+    print("--------------------------------------")
 
 
 if __name__ == "__main__":
