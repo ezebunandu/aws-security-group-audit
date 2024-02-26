@@ -67,6 +67,10 @@ def has_ipv6_open_ssh_or_rdp(security_group_rule):
                 return ipv6_range.get("CidrIpv6") in ["::/0"]
 
 
+def get_network_acls_with_open_ssh_or_rdp_all_regions(role_session, active_regions):
+    pass
+
+
 def get_security_groups_with_open_ssh_or_rdp_all_regions(role_session, active_regions):
     violations = []
     for region in active_regions:
@@ -89,7 +93,6 @@ def get_security_groups_with_open_ssh_or_rdp_all_regions(role_session, active_re
                         security_group_name: "has open ipv6 ssh or rdp access from the internet"
                     }
                 )
-    print(violations)
     return violations
 
 
@@ -99,7 +102,9 @@ def main():
     master_account_ec2_client = main_session.client("ec2")
     sts_client = main_session.client("sts")
 
-    audit_results = {}
+    security_group_audit_results = {}
+    network_acl_audit_results = {}
+
     active_accounts = get_active_accounts(master_account_org_client)
     active_regions = list_active_regions(master_account_ec2_client)
 
@@ -118,7 +123,7 @@ def main():
                 f"arn:aws:iam::{account_id}:role/{CROSS_ACCOUNT_ACCESS_ROLE_NAME}"
             )
             try:
-                print("Assuming cross account role for {account_id}")
+                print(f"Assuming cross account role for {account_id}")
                 # test env always expect original user (hezebonica) in role session name
                 member_account = sts_client.assume_role(
                     RoleArn=role_arn, RoleSessionName="hezebonica"
@@ -137,13 +142,17 @@ def main():
                 # raise error
                 print(f"error assuming role: {error}")
                 continue
-        violations_found = get_security_groups_with_open_ssh_or_rdp_all_regions(
-            session, regions
+        security_group_violations_found = (
+            get_security_groups_with_open_ssh_or_rdp_all_regions(session, regions)
         )
-        audit_results[account_name] = violations_found
+        if security_group_violations_found:
+            security_group_audit_results[account_name] = security_group_violations_found
+
+        # network_acl_violations_found = get_security_groups_with_open_ssh_or_rdp_all_regions
+        # network_acl_audit_results[account_name] = network_acl_violations_found
 
     # convert the dict to csv and write to console/file
-    print(audit_results)
+    print(security_group_audit_results)
 
 
 if __name__ == "__main__":

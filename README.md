@@ -1,6 +1,6 @@
-# AWS Security Group Audit
+# AWS Network RDP/SSH Audit
 
-Python script to audit the security groups within all accounts in an AWS org for open ssh or rdp access (ingress) from the internet
+Python script to audit the security groups and network acls within all accounts in an AWS org for open ssh or rdp access (ingress) from the internet
 
 ## Assumptions
 
