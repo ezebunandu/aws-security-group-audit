@@ -6,6 +6,8 @@ from utils import (
     get_active_accounts,
     list_active_regions,
     get_security_groups_with_open_ssh_or_rdp_all_regions,
+    get_network_acls_with_open_ssh_or_rdp_all_regions,
+    nacl_has_open_ssh_or_rdp,
 )
 
 # make this into an input to the cli wrapper (arg parse)
@@ -68,11 +70,19 @@ def main():
         if security_group_violations_found:
             security_group_audit_results[account_name] = security_group_violations_found
 
+        nacl_violations_found = get_network_acls_with_open_ssh_or_rdp_all_regions(
+            session, regions
+        )
+
+        if nacl_violations_found:
+            network_acl_audit_results[account_name] = nacl_violations_found
+
         # network_acl_violations_found = get_security_groups_with_open_ssh_or_rdp_all_regions
         # network_acl_audit_results[account_name] = network_acl_violations_found
 
     # convert the dict to csv and write to console/file
     print(security_group_audit_results)
+    print(network_acl_audit_results)
 
 
 if __name__ == "__main__":

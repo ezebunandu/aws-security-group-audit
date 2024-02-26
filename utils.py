@@ -58,8 +58,39 @@ def has_ipv6_open_ssh_or_rdp(security_group_rule):
                 return ipv6_range.get("CidrIpv6") in ["::/0"]
 
 
+def nacl_has_open_ssh_or_rdp(nacl_entry):
+    rule_action, is_egress, rule_protocol = (
+        nacl_entry.get("RuleAction"),
+        nacl_entry.get("Egress"),
+        nacl_entry.get("Protocol"),
+    )
+    # specificially check for rules allowing ssh or rdp
+    # protocol -1 rules that open all ports are ignored for now
+    if rule_action == "allow" and not is_egress and rule_protocol != "-1":
+        if nacl_entry.get("PortRange").get("To") in [22, 3389]:
+            return nacl_entry.get("CidrBlock") in ["0.0.0.0/0"] or nacl_entry.get(
+                "Ipv6CidrBlock"
+            ) in ["::/0"]
+    return False
+
+
 def get_network_acls_with_open_ssh_or_rdp_all_regions(role_session, active_regions):
-    pass
+    violations = []
+    for region in active_regions:
+        ec2 = role_session.resource("ec2", region_name=region)
+        nacls = ec2.network_acls.all()
+        for nacl in nacls:
+            nacl_id = nacl.network_acl_id
+            for entry in nacl.entries:
+                if nacl_has_open_ssh_or_rdp(nacl_entry=entry):
+                    violation = {
+                        f"acl-name": nacl_id,
+                        "region": region,
+                        "violation": "Has entry allowing unrestricted ssh or rdp",
+                    }
+                    violations.append(violation)
+                    break
+    return violations
 
 
 def get_security_groups_with_open_ssh_or_rdp_all_regions(role_session, active_regions):
