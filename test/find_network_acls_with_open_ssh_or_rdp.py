@@ -4,25 +4,32 @@ import boto3
 ec2 = boto3.resource("ec2", region_name="us-west-2")
 
 
-def has_ipv4_open_ssh_or_rdp(security_group_rule):
-    for rule in security_group_rule.ip_permissions:
-        if rule.get("FromPort") in [22, 3389] or rule.get("ToPort") in [22, 3389]:
-            for ip4_range in rule.get("IpRanges"):
-                return ip4_range.get("CidrIp") in ["0.0.0.0/0"]
+def has_open_ssh_or_rdp(nacl_entry):
+    rule_action, is_egress, rule_protocol = (
+        entry.get("RuleAction"),
+        entry.get("Egress"),
+        entry.get("Protocol"),
+    )
+    # specificially check for rules allowing ssh or rdp
+    # protocol -1 rules that open all ports are ignored for now
+    if rule_action == "allow" and not is_egress and rule_protocol != "-1":
+        if entry.get("PortRange").get("To") in [22, 3389]:
+            return entry.get("CidrBlock") in ["0.0.0.0/0"] or entry.get(
+                "Ipv6CidrBlock"
+            ) in ["::/0"]
+    return False
 
 
-def has_ipv6_open_ssh_or_rdp(security_group_rule):
-    for rule in security_group_rule.ip_permissions:
-        if rule.get("FromPort") in [22, 3389] or rule.get("ToPort") in [22, 3389]:
-            for ipv6_range in rule.get("Ipv6Ranges"):
-                return ipv6_range.get("CidrIpv6") in ["::/0"]
-
+violations = []
 
 nacls = ec2.network_acls.all()
 for nacl in nacls:
-    nacl_rules, nacl_id = nacl.entries, nacl.network_acl_id
-    for nacl_rule in nacl_rules:
-        rule_action, is_egress = nacl_rule.get("RuleAction"), nacl_rule.get("Egress")
-        # only check for allow inbound rules
-        if rule_action == "allow" and is_egress:
-            print(f"{nacl_id}: one to check")
+    nacl_id = nacl.network_acl_id
+    for entry in nacl.entries:
+        if has_open_ssh_or_rdp(entry):
+            violations.append(
+                {f"{nacl_id}": "has entry allowing unrestricted ssh or rdp"}
+            )
+            continue
+
+print(violations)
