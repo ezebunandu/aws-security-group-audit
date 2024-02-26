@@ -1,7 +1,7 @@
 #!/usr/bin/python
 import boto3
 
-ec2 = boto3.resource("ec2", region_name="us-east-1")
+ec2 = boto3.resource("ec2", region_name="us-west-2")
 
 
 def has_ipv4_open_ssh_or_rdp(security_group_rule):
@@ -20,4 +20,9 @@ def has_ipv6_open_ssh_or_rdp(security_group_rule):
 
 nacls = ec2.network_acls.all()
 for nacl in nacls:
-    print(nacl.entries)
+    nacl_rules, nacl_id = nacl.entries, nacl.network_acl_id
+    for nacl_rule in nacl_rules:
+        rule_action, is_egress = nacl_rule.get("RuleAction"), nacl_rule.get("Egress")
+        # only check for allow inbound rules
+        if rule_action == "allow" and is_egress:
+            print(f"{nacl_id}: one to check")
