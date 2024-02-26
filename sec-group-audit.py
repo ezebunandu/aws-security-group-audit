@@ -10,6 +10,11 @@ from utils import (
     nacl_has_open_ssh_or_rdp,
 )
 
+# To-Do: wrap the main function up with a cli interface(arg parse will be quickest to implement)
+# To-Do: cli input options: -master-account-name="master account" -cross-account-role="OrganizationAccountAccessRole" -output-file="audit_results"
+# To-Do: write outputs to csv files
+# To-Do: implement logging
+
 # make this into an input to the cli wrapper (arg parse)
 CROSS_ACCOUNT_ACCESS_ROLE_NAME = "OrganizationAccountAccessRole"
 
