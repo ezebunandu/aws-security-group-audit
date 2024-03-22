@@ -1,6 +1,7 @@
 import boto3
 import boto3.session
 import botocore
+import multiprocessing
 
 from utils import (
     get_active_accounts,
@@ -36,55 +37,60 @@ def main():
     active_regions = list_active_regions(master_account_ec2_client)
 
     session = main_session
+    # use multiprocessing to speed up the process
+    # assume the role into each member account and run the audit checks
+    # on a separate process
+    processes = []
     for account in active_accounts:
-        regions = active_regions
-        account_name, account_id = account.get("account_name"), account.get(
-            "account_id"
+        process = multiprocessing.Process(
+            target=run_audit_checks, args=(account, active_regions, sts_client)
         )
+        processes.append(process)
+        process.start()
 
-        # the name of the master account in the test env is `securing-the-cloud`
-        if account_name != MASTER_ACCOUNT_NAME:
-            # assume role
+    for process in processes:
+        process.join()
 
-            role_arn = (
-                f"arn:aws:iam::{account_id}:role/{CROSS_ACCOUNT_ACCESS_ROLE_NAME}"
+
+def run_audit_checks(account, active_regions, sts_client):
+    regions = active_regions
+    account_name, account_id = account.get("account_name"), account.get("account_id")
+    # the name of the master account in the test env is `securing-the-cloud`
+    if account_name != MASTER_ACCOUNT_NAME:
+        # assume role
+        role_arn = f"arn:aws:iam::{account_id}:role/{CROSS_ACCOUNT_ACCESS_ROLE_NAME}"
+        try:
+            print(f"Assuming cross account role for {account_id}")
+            # test env always expect original user (hezebonica) in role session name
+            member_account = sts_client.assume_role(
+                RoleArn=role_arn, RoleSessionName="hezebonica"
             )
-            try:
-                print(f"Assuming cross account role for {account_id}")
-                # test env always expect original user (hezebonica) in role session name
-                member_account = sts_client.assume_role(
-                    RoleArn=role_arn, RoleSessionName="hezebonica"
-                )
-                xAcctAccessKey = member_account["Credentials"]["AccessKeyId"]
-                xAcctSecretKey = member_account["Credentials"]["SecretAccessKey"]
-                xAcctSeshToken = member_account["Credentials"]["SessionToken"]
+            xAcctAccessKey = member_account["Credentials"]["AccessKeyId"]
+            xAcctSecretKey = member_account["Credentials"]["SecretAccessKey"]
+            xAcctSeshToken = member_account["Credentials"]["SessionToken"]
+            cross_account_session = boto3.Session(
+                aws_access_key_id=xAcctAccessKey,
+                aws_secret_access_key=xAcctSecretKey,
+                aws_session_token=xAcctSeshToken,
+            )
+            session = cross_account_session
+        except botocore.exceptions as error:
+            # raise error
+            print(f"error assuming role: {error}")
+            return
 
-                cross_account_session = boto3.Session(
-                    aws_access_key_id=xAcctAccessKey,
-                    aws_secret_access_key=xAcctSecretKey,
-                    aws_session_token=xAcctSeshToken,
-                )
-                session = cross_account_session
-            except botocore.exceptions as error:
-                # raise error
-                print(f"error assuming role: {error}")
-                continue
-        security_group_violations_found = (
-            get_security_groups_with_open_ssh_or_rdp_all_regions(session, regions)
-        )
-        if security_group_violations_found:
-            security_group_audit_results[account_name] = security_group_violations_found
+    security_group_violations_found = (
+        get_security_groups_with_open_ssh_or_rdp_all_regions(session, regions)
+    )
+    network_acl_violations_found = get_network_acls_with_open_ssh_or_rdp_all_regions(
+        session, regions
+    )
 
-        nacl_violations_found = get_network_acls_with_open_ssh_or_rdp_all_regions(
-            session, regions
-        )
+    # return the audit results
+    return account_name, security_group_violations_found, network_acl_violations_found
 
-        if nacl_violations_found:
-            network_acl_audit_results[account_name] = nacl_violations_found
 
-        # network_acl_violations_found = get_security_groups_with_open_ssh_or_rdp_all_regions
-        # network_acl_audit_results[account_name] = network_acl_violations_found
-
+def print_audit_results(security_group_audit_results, network_acl_audit_results):
     # convert the dict to csv and write to console/file
     print("security group audit results")
     print("------------------------------------")
