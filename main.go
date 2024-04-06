@@ -2,40 +2,76 @@ package main
 
 import (
 	"fmt"
-	"sync"
 
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/endpoints"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
+	"github.com/aws/aws-sdk-go/service/organizations"
 )
 
-func describeSecurityGroupsInRegion(region string, wg *sync.WaitGroup, sess *session.Session) {
-	defer wg.Done()
+func getActiveAccounts(sess *session.Session) []map[string]string {
+	svc := organizations.New(sess)
 
-	svc := ec2.New(sess, &aws.Config{Region: aws.String(region)})
+	input := &organizations.ListAccountsInput{}
 
-	result, err := svc.DescribeSecurityGroups(nil)
+	result, err := svc.ListAccounts(input)
 	if err != nil {
-		fmt.Println("Error describing security groups in region", region, err)
+		fmt.Println("Error listing accounts,", err)
+		return nil
+	}
+
+	var allActiveAccounts []map[string]string
+
+	for _, account := range result.Accounts {
+		if *account.Status == "ACTIVE" {
+			allActiveAccounts = append(allActiveAccounts, map[string]string{
+				"account_name": *account.Name,
+				"account_id":   *account.Id,
+			})
+		}
+	}
+
+	return allActiveAccounts
+}
+
+func checkSecurityGroups(sess *session.Session, accountId string) {
+	svc := ec2.New(sess)
+
+	input := &ec2.DescribeSecurityGroupsInput{}
+
+	result, err := svc.DescribeSecurityGroups(input)
+	if err != nil {
+		fmt.Println("Error describing security groups for account", accountId, err)
 		return
 	}
 
 	for _, group := range result.SecurityGroups {
-		fmt.Println("Security Group:", *group.GroupId, "Region:", region)
 		for _, permission := range group.IpPermissions {
 			for _, rangeInfo := range permission.IpRanges {
-				if *rangeInfo.CidrIp == "0.0.0.0/0" && *permission.IpProtocol == "tcp" && *permission.FromPort == 22 {
-					fmt.Println("Allows SSH from the internet")
-				}
-			}
-			for _, rangeInfo := range permission.Ipv6Ranges {
-				if *rangeInfo.CidrIpv6 == "::/0" && *permission.IpProtocol == "tcp" && *permission.FromPort == 22 {
-					fmt.Println("Allows SSH from the internet over IPv6")
+				if *rangeInfo.CidrIp == "0.0.0.0/0" && *permission.IpProtocol == "tcp" && (*permission.FromPort == 22 || *permission.FromPort == 3389) {
+					fmt.Println("Security Group:", *group.GroupId, "in account", accountId, "allows SSH or RDP from the internet")
 				}
 			}
 		}
 	}
+}
+func getActiveRegions(sess *session.Session) []string {
+	svc := ec2.New(sess)
+
+	input := &ec2.DescribeRegionsInput{}
+
+	result, err := svc.DescribeRegions(input)
+	if err != nil {
+		fmt.Println("Error describing regions,", err)
+		return nil
+	}
+
+	var activeRegions []string
+	for _, region := range result.Regions {
+		activeRegions = append(activeRegions, *region.RegionName)
+	}
+
+	return activeRegions
 }
 
 func main() {
@@ -45,16 +81,14 @@ func main() {
 		return
 	}
 
-	regions, ok := endpoints.RegionsForService(endpoints.DefaultPartitions(), endpoints.AwsPartitionID, endpoints.Ec2ServiceID)
-	if !ok {
-		fmt.Println("Error getting regions")
-		return
+	activeAccounts := getActiveAccounts(sess)
+	for _, account := range activeAccounts {
+		if account["account_name"] == "securing-the-cloud" {
+			fmt.Println("Account Name:", account["account_name"], "Account ID:", account["account_id"])
+			activeRegions := getActiveRegions(sess)
+			for _, region := range activeRegions {
+				fmt.Println("Active Region:", region)
+			}
+		}
 	}
-
-	var wg sync.WaitGroup
-	for region := range regions {
-		wg.Add(1)
-		go describeSecurityGroupsInRegion(region, &wg, sess)
-	}
-	wg.Wait()
 }
