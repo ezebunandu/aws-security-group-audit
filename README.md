@@ -1,6 +1,6 @@
 # AWS Network RDP/SSH Audit
 
-Python script to audit the security groups and network acls within all accounts in an AWS org for open ssh or rdp access (ingress) from the internet
+Script to audit the security groups and network acls within all accounts in an AWS org for open ssh or rdp access (ingress) from the internet
 
 ## Assumptions
 
@@ -11,17 +11,18 @@ Python script to audit the security groups and network acls within all accounts 
 
 ## How to run
 
-1. Make a virtual environment
+1. Ensure you have Go installed on your machine. You can download it from [here](https://golang.org/dl/).
 
-    `python -m venv .venv && source .venv/bin/activate`
+2. Clone the repository to your local machine.
 
-2. Install the dependencies
+    `git clone https://github.com/ezebunandu/aws-security-group-audit`
 
-    `pip install -r requirements.txt`
+3. Navigate to the directory containing the script.
 
-3. Run the script
-    `python sec-group-audit.py`
+    `cd aws-security-group-audit`
+
+4. Run the script using the `go run` command.
+
+    `go run main.go`
 
 ## Expected Output
-
-csv report with all violations found.
