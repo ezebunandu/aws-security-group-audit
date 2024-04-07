@@ -23,6 +23,6 @@ Script to audit the security groups and network acls within all accounts in an A
 
 4. Run the script using the `go run` command.
 
-    `go run main.go`
+    `go run security-group-audit.go`
 
 ## Expected Output
