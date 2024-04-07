@@ -2,13 +2,20 @@ package main
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/organizations"
 )
 
+var CROSS_ACCOUNT_ACCESS_ROLE_NAME string = "OrganizationAccountAccessRole"
+var MASTER_ACCOUNT_NAME string = "securing-the-cloud"
+
+// getActiveAccounts retrieves all active accounts in an AWS organization.
+// It returns a slice of maps, where each map represents an active account with its name and ID.
 func getActiveAccounts(sess *session.Session) []map[string]string {
 	svc := organizations.New(sess)
 
@@ -34,14 +41,16 @@ func getActiveAccounts(sess *session.Session) []map[string]string {
 	return allActiveAccounts
 }
 
-func checkSecurityGroups(sess *session.Session, accountId string) {
+// checkSecurityGroups checks the security groups of a given AWS account for rules that allow SSH or RDP traffic from all IPv4 or IPv6 addresses.
+// If it finds a rule that matches the criteria, it prints a message to the console.
+func checkSecurityGroups(sess *session.Session, accountId string, region string) {
 	svc := ec2.New(sess)
 
 	input := &ec2.DescribeSecurityGroupsInput{}
 
 	result, err := svc.DescribeSecurityGroups(input)
 	if err != nil {
-		fmt.Println("Error describing security groups for account", accountId, err)
+		fmt.Println("Error describing security groups for account", accountId, "in region", region, err)
 		return
 	}
 
@@ -49,12 +58,52 @@ func checkSecurityGroups(sess *session.Session, accountId string) {
 		for _, permission := range group.IpPermissions {
 			for _, rangeInfo := range permission.IpRanges {
 				if *rangeInfo.CidrIp == "0.0.0.0/0" && *permission.IpProtocol == "tcp" && (*permission.FromPort == 22 || *permission.FromPort == 3389) {
-					fmt.Println("Security Group:", *group.GroupId, "in account", accountId, "allows SSH or RDP from the internet")
+					fmt.Println("Security Group:", *group.GroupId, "in account", accountId, "in region", region, "allows SSH or RDP from the internet (IPv4)")
+				}
+			}
+			for _, ipv6RangeInfo := range permission.Ipv6Ranges {
+				if *ipv6RangeInfo.CidrIpv6 == "::/0" && *permission.IpProtocol == "tcp" && (*permission.FromPort == 22 || *permission.FromPort == 3389) {
+					fmt.Println("Security Group:", *group.GroupId, "in account", accountId, "in region", region, "allows SSH or RDP from the internet (IPv6)")
 				}
 			}
 		}
 	}
 }
+
+// checkNetworkACLs checks the network ACLs of a given AWS account for entries that allow SSH or RDP traffic from all IPv4 or IPv6 addresses.
+// If it finds such an entry, it prints a message to the console.
+func checkNetworkACLs(sess *session.Session, accountId string, region string) {
+	svc := ec2.New(sess)
+
+	input := &ec2.DescribeNetworkAclsInput{}
+
+	result, err := svc.DescribeNetworkAcls(input)
+	if err != nil {
+		fmt.Println("Error describing network ACLs for account", accountId, "in region", region, err)
+		return
+	}
+
+	for _, nacl := range result.NetworkAcls {
+		if nacl.NetworkAclId == nil {
+			continue
+		}
+		for _, entry := range nacl.Entries {
+			if entry == nil || entry.RuleAction == nil || entry.Egress == nil || entry.Protocol == nil || entry.PortRange == nil || entry.PortRange.To == nil {
+				continue
+			}
+			if *entry.RuleAction == "allow" && !*entry.Egress && *entry.Protocol != "-1" {
+				if *entry.PortRange.To == 22 || *entry.PortRange.To == 3389 {
+					if entry.CidrBlock != nil && *entry.CidrBlock == "0.0.0.0/0" || entry.Ipv6CidrBlock != nil && *entry.Ipv6CidrBlock == "::/0" {
+						fmt.Println("Network ACL:", *nacl.NetworkAclId, "in account", accountId, "in region", region, "has entry allowing unrestricted SSH or RDP")
+					}
+				}
+			}
+		}
+	}
+}
+
+// getActiveRegions retrieves all active regions in an AWS account.
+// It returns a slice of their names.
 func getActiveRegions(sess *session.Session) []string {
 	svc := ec2.New(sess)
 
@@ -82,13 +131,32 @@ func main() {
 	}
 
 	activeAccounts := getActiveAccounts(sess)
+	var wg sync.WaitGroup
 	for _, account := range activeAccounts {
-		if account["account_name"] == "securing-the-cloud" {
-			fmt.Println("Account Name:", account["account_name"], "Account ID:", account["account_id"])
-			activeRegions := getActiveRegions(sess)
-			for _, region := range activeRegions {
-				fmt.Println("Active Region:", region)
-			}
+		if account["account_name"] != MASTER_ACCOUNT_NAME {
+			wg.Add(1)
+			go func(account map[string]string) {
+				defer wg.Done()
+				roleArn := fmt.Sprintf("arn:aws:iam::%s:role/%s", account["account_id"], CROSS_ACCOUNT_ACCESS_ROLE_NAME)
+				creds := stscreds.NewCredentials(sess, roleArn)
+				sessWithCreds := session.Must(session.NewSession(&aws.Config{
+					Credentials: creds,
+				}))
+
+				activeRegions := getActiveRegions(sessWithCreds)
+				var regionWg sync.WaitGroup
+				for _, region := range activeRegions {
+					regionWg.Add(1)
+					go func(region string) {
+						defer regionWg.Done()
+						sessWithRegion := sessWithCreds.Copy(&aws.Config{Region: aws.String(region)})
+						checkSecurityGroups(sessWithRegion, account["account_id"], region)
+						checkNetworkACLs(sessWithRegion, account["account_id"], region)
+					}(region)
+				}
+				regionWg.Wait()
+			}(account)
 		}
 	}
+	wg.Wait()
 }
