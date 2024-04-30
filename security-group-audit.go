@@ -14,6 +14,14 @@ import (
 var CROSS_ACCOUNT_ACCESS_ROLE_NAME string = "OrganizationAccountAccessRole"
 var MASTER_ACCOUNT_NAME string = "securing-the-cloud"
 
+type Violation struct {
+	AccountId string
+	Type      string // "SecurityGroup" or "NetworkACL"
+	Region    string
+	Protocol  string
+	Port      int64
+}
+
 // getActiveAccounts retrieves all active accounts in an AWS organization.
 // It returns a slice of maps, where each map represents an active account with its name and ID.
 func getActiveAccounts(sess *session.Session) []map[string]string {
@@ -43,7 +51,7 @@ func getActiveAccounts(sess *session.Session) []map[string]string {
 
 // checkSecurityGroups checks the security groups of a given AWS account for rules that allow SSH or RDP traffic from all IPv4 or IPv6 addresses.
 // If it finds a rule that matches the criteria, it prints a message to the console.
-func checkSecurityGroups(sess *session.Session, accountId string, region string) {
+func checkSecurityGroups(sess *session.Session, accountId string, region string) []Violation {
 	svc := ec2.New(sess)
 
 	input := &ec2.DescribeSecurityGroupsInput{}
@@ -51,38 +59,53 @@ func checkSecurityGroups(sess *session.Session, accountId string, region string)
 	result, err := svc.DescribeSecurityGroups(input)
 	if err != nil {
 		fmt.Println("Error describing security groups for account", accountId, "in region", region, err)
-		return
+		return nil
 	}
+
+	var violations []Violation
 
 	for _, group := range result.SecurityGroups {
 		for _, permission := range group.IpPermissions {
 			for _, rangeInfo := range permission.IpRanges {
 				if *rangeInfo.CidrIp == "0.0.0.0/0" && *permission.IpProtocol == "tcp" && (*permission.FromPort == 22 || *permission.FromPort == 3389) {
-					fmt.Println("Security Group:", *group.GroupId, "in account", accountId, "in region", region, "allows SSH or RDP from the internet (IPv4)")
+					violations = append(violations, Violation{
+						AccountId: accountId,
+						Type:      "SecurityGroup",
+						Region:    region,
+						Protocol:  *permission.IpProtocol,
+						Port:      *permission.FromPort,
+					})
 				}
 			}
 			for _, ipv6RangeInfo := range permission.Ipv6Ranges {
 				if *ipv6RangeInfo.CidrIpv6 == "::/0" && *permission.IpProtocol == "tcp" && (*permission.FromPort == 22 || *permission.FromPort == 3389) {
-					fmt.Println("Security Group:", *group.GroupId, "in account", accountId, "in region", region, "allows SSH or RDP from the internet (IPv6)")
+					violations = append(violations, Violation{
+						AccountId: accountId,
+						Type:      "SecurityGroup",
+						Region:    region,
+						Protocol:  *permission.IpProtocol,
+						Port:      *permission.FromPort,
+					})
 				}
 			}
 		}
 	}
+	return violations
 }
 
 // checkNetworkACLs checks the network ACLs of a given AWS account for entries that allow SSH or RDP traffic from all IPv4 or IPv6 addresses.
 // If it finds such an entry, it prints a message to the console.
-func checkNetworkACLs(sess *session.Session, accountId string, region string) {
+func checkNetworkACLs(sess *session.Session, accountId string, region string) []Violation {
 	svc := ec2.New(sess)
-
 	input := &ec2.DescribeNetworkAclsInput{}
 
 	result, err := svc.DescribeNetworkAcls(input)
 	if err != nil {
 		fmt.Println("Error describing network ACLs for account", accountId, "in region", region, err)
-		return
+		return nil
 	}
 
+	var violations []Violation
 	for _, nacl := range result.NetworkAcls {
 		if nacl.NetworkAclId == nil {
 			continue
@@ -93,13 +116,30 @@ func checkNetworkACLs(sess *session.Session, accountId string, region string) {
 			}
 			if *entry.RuleAction == "allow" && !*entry.Egress && *entry.Protocol != "-1" {
 				if *entry.PortRange.To == 22 || *entry.PortRange.To == 3389 {
-					if entry.CidrBlock != nil && *entry.CidrBlock == "0.0.0.0/0" || entry.Ipv6CidrBlock != nil && *entry.Ipv6CidrBlock == "::/0" {
-						fmt.Println("Network ACL:", *nacl.NetworkAclId, "in account", accountId, "in region", region, "has entry allowing unrestricted SSH or RDP")
+					if entry.CidrBlock != nil && *entry.CidrBlock == "0.0.0.0/0" {
+						violations = append(violations, Violation{
+							AccountId: accountId,
+							Type:      "NetworkACL",
+							Region:    region,
+							Protocol:  *entry.Protocol,
+							Port:      *entry.PortRange.To,
+						})
+					}
+					if entry.Ipv6CidrBlock != nil && *entry.Ipv6CidrBlock == "::/0" {
+						violations = append(violations, Violation{
+							AccountId: accountId,
+							Type:      "NetworkACL",
+							Region:    region,
+							Protocol:  *entry.Protocol,
+							Port:      *entry.PortRange.To,
+						})
 					}
 				}
 			}
 		}
 	}
+
+	return violations
 }
 
 // getActiveRegions retrieves all active regions in an AWS account.
@@ -150,8 +190,14 @@ func main() {
 					go func(region string) {
 						defer regionWg.Done()
 						sessWithRegion := sessWithCreds.Copy(&aws.Config{Region: aws.String(region)})
-						checkSecurityGroups(sessWithRegion, account["account_id"], region)
-						checkNetworkACLs(sessWithRegion, account["account_id"], region)
+						violations := checkSecurityGroups(sessWithRegion, account["account_id"], region)
+						for _, violation := range violations {
+							fmt.Printf("Violation found: %+v\n", violation)
+						}
+						naclViolations := checkNetworkACLs(sessWithRegion, account["account_id"], region)
+						for _, violation := range naclViolations {
+							fmt.Printf("Violation found: %+v\n", violation)
+						}
 					}(region)
 				}
 				regionWg.Wait()
